@@ -176,6 +176,47 @@ void log(const string & s, HANDLE handle, PVOID data, ULONG length) {
 
 extern "C" {
 
+__declspec(dllexport) BOOLEAN __stdcall HidD_FlushQueue(HANDLE hidDev) {
+  log(__FUNCTION__);
+  return Real_HidD_FlushQueue(hidDev);
+}
+
+__declspec(dllexport) BOOLEAN __stdcall HidD_GetConfiguration(HANDLE hidDev, PHIDD_CONFIGURATION config, ULONG bufferLength) {
+  BOOLEAN result = Real_HidD_GetConfiguration(hidDev, config, bufferLength);
+  log(__FUNCTION__, hidDev, (PVOID)config, bufferLength);
+  return result;
+}
+
+__declspec(dllexport) BOOLEAN __stdcall HidD_GetIndexedString(HANDLE hidDev, ULONG strIndex, PVOID buffer, ULONG bufferLength) {
+  BOOLEAN result = Real_HidD_GetIndexedString(hidDev, strIndex, buffer, bufferLength);
+  log(__FUNCTION__, hidDev, buffer, bufferLength);
+  return result;
+}
+
+__declspec(dllexport) BOOLEAN __stdcall HidD_GetPhysicalDescriptor(HANDLE hidDev, PVOID buffer, ULONG bufferLength) {
+  BOOLEAN result = Real_HidD_GetPhysicalDescriptor(hidDev, buffer, bufferLength);
+  log(__FUNCTION__, hidDev, buffer, bufferLength);
+  return result;
+}
+
+__declspec(dllexport) ULONG __stdcall HidD_Hello(PVOID buffer, ULONG bufferLength) {
+  ULONG result = Real_HidD_Hello(buffer, bufferLength);
+  log(__FUNCTION__, NULL, buffer, bufferLength);
+  return result;
+}
+
+__declspec(dllexport) BOOLEAN __stdcall HidD_GetInputReport(HANDLE hidDev, PVOID buffer, ULONG bufferLength) {
+  BOOLEAN result = Real_HidD_GetInputReport(hidDev, buffer, bufferLength);
+  log(__FUNCTION__, hidDev, buffer, bufferLength);
+  return result;
+}
+
+__declspec(dllexport) BOOLEAN __stdcall HidD_GetNumInputBuffers(HANDLE hidDev, PULONG numberBuffers) {
+  BOOLEAN result = Real_HidD_GetNumInputBuffers(hidDev, numberBuffers);
+  log(__FUNCTION__);
+  return result;
+}
+
 __declspec(dllexport) void __stdcall HidD_GetHidGuid(GUID *hidGuid) {
   log("HidD_GetHidGuid");
   Real_HidD_GetHidGuid(hidGuid);
@@ -225,6 +266,18 @@ __declspec(dllexport)  BOOLEAN __stdcall HidD_GetPreparsedData(HANDLE hidDev, HI
 __declspec(dllexport)  BOOLEAN __stdcall HidD_FreePreparsedData(HIDP_PREPARSED_DATA *preparsedData) {
   log("HidD_FreePreparsedData");
   return Real_HidD_FreePreparsedData(preparsedData);
+}
+
+__declspec(dllexport) BOOLEAN __stdcall HidD_SetConfiguration(HANDLE hidDev, PHIDD_CONFIGURATION config, ULONG bufferLength) {
+  BOOLEAN result = Real_HidD_SetConfiguration(hidDev, config, bufferLength);
+  log(__FUNCTION__, hidDev, (PVOID)config, bufferLength);
+  return result;
+}
+
+__declspec(dllexport) BOOLEAN __stdcall HidD_SetOutputReport(HANDLE hidDev, PVOID buffer, ULONG bufferLength) {
+  BOOLEAN result = Real_HidD_SetOutputReport(hidDev, buffer, bufferLength);
+  log(__FUNCTION__, hidDev, buffer, bufferLength);
+  return result;
 }
 
 
