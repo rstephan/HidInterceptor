@@ -1,8 +1,11 @@
+#define _CRT_SECURE_NO_WARNINGS 1
 #include <Windows.h>
 #include <pshpack4.h>
 #include <iostream>
 #include <fstream>
 #include <cstdint>
+
+#define BUFFERSIZE_HEXDUMP 64
 
 #define HIDP_STATUS_SUCCESS (0x11 << 16)
 struct HIDP_PREPARSED_DATA;
@@ -149,245 +152,403 @@ OVR_DECLARE_HIDFUNC(HidP_UsageListDifference, NTSTATUS, (PUSAGE PreviousUsageLis
 using namespace std;
 
 
-void log(const string & s) {
-  ofstream of("f:\\hid.txt", ios::app);
-  of << GetTickCount() << " " << s.c_str() << endl;
-  of.close();
+#define LOGGER_OPEN FILE* f = logger_open(__FUNCTION__)
+#define LOGGER_CLOSE fclose(f)
+
+FILE* logger_open(const char* func_name)
+{
+  FILE* f;
+  const char* filename = "hid.txt";
+  const char* file_getenv = getenv("HIDINTERCEPTOR_LOG");
+
+  if (file_getenv) {
+    filename = file_getenv;
+  }
+  f = fopen(filename, "a");
+  if (f) {
+    SYSTEMTIME sysTime;
+
+    GetLocalTime(&sysTime);
+    fprintf(f, "%04d/%02d/%02d ", sysTime.wYear, sysTime.wMonth, sysTime.wDay);
+    fprintf(f, "%02d:%02d:%02d.%03d", sysTime.wHour, sysTime.wMinute, sysTime.wSecond, sysTime.wMilliseconds);
+    fprintf(f, " %s\n", func_name);
+  }
+  return f;
 }
 
-void log(const string & s, HANDLE handle, PVOID data, ULONG length) {
-  ofstream of("f:\\hid.txt", ios::app);
-  of << GetTickCount() << " " << s.c_str() << " " << handle << " \n";
-  of << "Buffer length: " << length << "\n";
-  of << "{\n";
-  uint8_t * b = (uint8_t *)data;
-  static char buffer[64];
-  memset(buffer, 0, 64);
-  while (length) {
-    for (int i = 0; i < 16 && length; ++i) {
-      sprintf(buffer + (3 * i), "%02X ", *b++);
-      --length;
+void logger_hexdump(FILE* f, void* data, size_t len)
+{
+  uint8_t* b = (uint8_t*)data;
+  char buffer[BUFFERSIZE_HEXDUMP];
+  char buffer_ascii[BUFFERSIZE_HEXDUMP];
+
+  memset(buffer, 0, sizeof(buffer));
+  memset(buffer_ascii, 0, sizeof(buffer_ascii));
+  fprintf(f, "  Length: %i\n  {\n", len);
+  while (len) {
+    for (int i = 0; i < 16 && len; ++i) {
+      sprintf(buffer + (3 * i), "%02X ", *b);
+      sprintf(buffer_ascii + i, "%c", ((*b >= 0x20) && (*b < 0x7f)) ? *b : '.');
+      b++;
+      --len;
     }
-    of << buffer << "\n";
+    fprintf(f, "    %-48s  %s\n", buffer, buffer_ascii);
   }
-  of << "}" << endl;
-  of.close();
+  fprintf(f, "  }\n");
+}
+
+void logger_bool(FILE* f, BOOLEAN ret)
+{
+  fprintf(f, "  Result: %s\n", ret ? "True" : "False");
+}
+
+void logger_handle(FILE* f, HANDLE handle)
+{
+  fprintf(f, "  HANDLE: %p\n", handle);
+}
+
+void logger_ulong(FILE* f, const char* name, ULONG val)
+{
+  fprintf(f, "  %s: %il\n", name, val);
+}
+
+void logger_attr(FILE* f, HIDD_ATTRIBUTES* attr)
+{
+  fprintf(f, "  Size   : %i\n", attr->Size);
+  fprintf(f, "  VID/PID: %04X:%04X\n", attr->VendorID, attr->ProductID);
+  fprintf(f, "  Version: %08X\n", attr->VersionNumber);
 }
 
 extern "C" {
 
 __declspec(dllexport) BOOLEAN __stdcall HidD_FlushQueue(HANDLE hidDev) {
-  log(__FUNCTION__);
+  LOGGER_OPEN;
+  logger_handle(f, hidDev);
+  LOGGER_CLOSE;
   return Real_HidD_FlushQueue(hidDev);
 }
 
 __declspec(dllexport) BOOLEAN __stdcall HidD_GetConfiguration(HANDLE hidDev, PHIDD_CONFIGURATION config, ULONG bufferLength) {
   BOOLEAN result = Real_HidD_GetConfiguration(hidDev, config, bufferLength);
-  log(__FUNCTION__, hidDev, (PVOID)config, bufferLength);
+  LOGGER_OPEN;
+  logger_handle(f, hidDev);
+  logger_ulong(f, "bufferLength", bufferLength);
+  if (result) {
+    logger_hexdump(f, config, sizeof(*config));
+  }
+  LOGGER_CLOSE;
   return result;
 }
 
 __declspec(dllexport) BOOLEAN __stdcall HidD_GetIndexedString(HANDLE hidDev, ULONG strIndex, PVOID buffer, ULONG bufferLength) {
   BOOLEAN result = Real_HidD_GetIndexedString(hidDev, strIndex, buffer, bufferLength);
-  log(__FUNCTION__, hidDev, buffer, bufferLength);
+  LOGGER_OPEN;
+  logger_handle(f, hidDev);
+  logger_ulong(f, "strIndex", strIndex);
+  if (result) {
+    logger_hexdump(f, buffer, bufferLength);
+  }
+  LOGGER_CLOSE;
   return result;
 }
 
 __declspec(dllexport) BOOLEAN __stdcall HidD_GetPhysicalDescriptor(HANDLE hidDev, PVOID buffer, ULONG bufferLength) {
   BOOLEAN result = Real_HidD_GetPhysicalDescriptor(hidDev, buffer, bufferLength);
-  log(__FUNCTION__, hidDev, buffer, bufferLength);
+  LOGGER_OPEN;
+  logger_handle(f, hidDev);
+  logger_hexdump(f, buffer, bufferLength);
+  LOGGER_CLOSE;
   return result;
 }
 
 __declspec(dllexport) ULONG __stdcall HidD_Hello(PVOID buffer, ULONG bufferLength) {
   ULONG result = Real_HidD_Hello(buffer, bufferLength);
-  log(__FUNCTION__, NULL, buffer, bufferLength);
+  LOGGER_OPEN;
+  logger_ulong(f, "Result", result);
+  logger_hexdump(f, buffer, bufferLength);
+  LOGGER_CLOSE;
   return result;
 }
 
 __declspec(dllexport) BOOLEAN __stdcall HidD_GetInputReport(HANDLE hidDev, PVOID buffer, ULONG bufferLength) {
   BOOLEAN result = Real_HidD_GetInputReport(hidDev, buffer, bufferLength);
-  log(__FUNCTION__, hidDev, buffer, bufferLength);
+  LOGGER_OPEN;
+  logger_handle(f, hidDev);
+  if (result) {
+    logger_hexdump(f, buffer, bufferLength);
+  }
+  LOGGER_CLOSE;
   return result;
 }
 
 __declspec(dllexport) BOOLEAN __stdcall HidD_GetNumInputBuffers(HANDLE hidDev, PULONG numberBuffers) {
   BOOLEAN result = Real_HidD_GetNumInputBuffers(hidDev, numberBuffers);
-  log(__FUNCTION__);
+  LOGGER_OPEN;
+  logger_handle(f, hidDev);
+  if (numberBuffers) {
+    logger_ulong(f, "numberBuffers", *numberBuffers);
+  }
+  LOGGER_CLOSE;
   return result;
 }
 
 __declspec(dllexport) void __stdcall HidD_GetHidGuid(GUID *hidGuid) {
-  log("HidD_GetHidGuid");
   Real_HidD_GetHidGuid(hidGuid);
+  LOGGER_OPEN;
+  logger_hexdump(f, hidGuid, sizeof(GUID));
+  LOGGER_CLOSE;
 }
 
 __declspec(dllexport)  BOOLEAN __stdcall HidD_SetNumInputBuffers(HANDLE hidDev, ULONG numberBuffers) {
-  log("HidD_SetNumInputBuffers");
-  return Real_HidD_SetNumInputBuffers(hidDev, numberBuffers);
+  BOOLEAN result = Real_HidD_SetNumInputBuffers(hidDev, numberBuffers);
+  LOGGER_OPEN;
+  logger_bool(f, result);
+  logger_handle(f, hidDev);
+  logger_ulong(f, "numberBuffers", numberBuffers);
+  LOGGER_CLOSE;
+  return result;
 }
 
 __declspec(dllexport)  BOOLEAN __stdcall HidD_GetFeature(HANDLE hidDev, PVOID buffer, ULONG bufferLength) {
   BOOLEAN result = Real_HidD_GetFeature(hidDev, buffer, bufferLength);
-  log("HidD_GetFeature", hidDev, buffer, bufferLength);
+  LOGGER_OPEN;
+  logger_handle(f, hidDev);
+  if (result) {
+    logger_hexdump(f, buffer, bufferLength);
+  }
+  LOGGER_CLOSE;
   return result;
 }
 
 __declspec(dllexport)  BOOLEAN __stdcall HidD_SetFeature(HANDLE hidDev, PVOID buffer, ULONG bufferLength) {
-  log("HidD_SetFeature", hidDev, buffer, bufferLength);
-  return Real_HidD_SetFeature(hidDev, buffer, bufferLength);
+  BOOLEAN result = Real_HidD_SetFeature(hidDev, buffer, bufferLength);
+  LOGGER_OPEN;
+  logger_bool(f, result);
+  logger_handle(f, hidDev);
+  logger_hexdump(f, buffer, bufferLength);
+  LOGGER_CLOSE;
+  return result;
 }
 
 __declspec(dllexport)  BOOLEAN __stdcall HidD_GetAttributes(HANDLE hidDev, HIDD_ATTRIBUTES *attributes) {
-  log("HidD_GetAttributes");
-  return Real_HidD_GetAttributes(hidDev, attributes);
+  BOOLEAN result = Real_HidD_GetAttributes(hidDev, attributes);
+  LOGGER_OPEN;
+  logger_handle(f, hidDev);
+  if (result) {
+    logger_attr(f, attributes);
+  }
+  LOGGER_CLOSE;
+  return result;
 }
 
 __declspec(dllexport)  BOOLEAN __stdcall HidD_GetManufacturerString(HANDLE hidDev, PVOID buffer, ULONG bufferLength) {
-  log("HidD_GetManufacturerString");
-  return Real_HidD_GetManufacturerString(hidDev, buffer, bufferLength);
+  BOOLEAN result = Real_HidD_GetManufacturerString(hidDev, buffer, bufferLength);
+  LOGGER_OPEN;
+  logger_handle(f, hidDev);
+  if (result) {
+    logger_hexdump(f, buffer, bufferLength);
+  }
+  LOGGER_CLOSE;
+  return result;
 }
 
 __declspec(dllexport)  BOOLEAN __stdcall HidD_GetProductString(HANDLE hidDev, PVOID buffer, ULONG bufferLength) {
-  log("HidD_GetProductString");
-  return Real_HidD_GetProductString(hidDev, buffer, bufferLength);
+  BOOLEAN result = Real_HidD_GetProductString(hidDev, buffer, bufferLength);
+  LOGGER_OPEN;
+  logger_handle(f, hidDev);
+  if (result) {
+    logger_hexdump(f, buffer, bufferLength);
+  }
+  LOGGER_CLOSE;
+  return result;
 }
 
 __declspec(dllexport)  BOOLEAN __stdcall HidD_GetSerialNumberString(HANDLE hidDev, PVOID buffer, ULONG bufferLength) {
-  log("HidD_GetSerialNumberString");
-  return Real_HidD_GetSerialNumberString(hidDev, buffer, bufferLength);
+  BOOLEAN result = Real_HidD_GetSerialNumberString(hidDev, buffer, bufferLength);
+  LOGGER_OPEN;
+  logger_handle(f, hidDev);
+  if (result) {
+    logger_hexdump(f, buffer, bufferLength);
+  }
+  LOGGER_CLOSE;
+  return result;
 }
 
 __declspec(dllexport)  BOOLEAN __stdcall HidD_GetPreparsedData(HANDLE hidDev, HIDP_PREPARSED_DATA **preparsedData) {
-  log("HidD_GetPreparsedData");
-  return Real_HidD_GetPreparsedData(hidDev, preparsedData);
+  BOOLEAN result = Real_HidD_GetPreparsedData(hidDev, preparsedData);
+  LOGGER_OPEN;
+  logger_bool(f, result);
+  logger_handle(f, preparsedData);
+  LOGGER_CLOSE;
+  return result;
 }
 
 __declspec(dllexport)  BOOLEAN __stdcall HidD_FreePreparsedData(HIDP_PREPARSED_DATA *preparsedData) {
-  log("HidD_FreePreparsedData");
-  return Real_HidD_FreePreparsedData(preparsedData);
+  BOOLEAN result = Real_HidD_FreePreparsedData(preparsedData);
+  LOGGER_OPEN;
+  logger_bool(f, result);
+  logger_handle(f, preparsedData);
+  LOGGER_CLOSE;
+  return result;
 }
 
 __declspec(dllexport) BOOLEAN __stdcall HidD_SetConfiguration(HANDLE hidDev, PHIDD_CONFIGURATION config, ULONG bufferLength) {
   BOOLEAN result = Real_HidD_SetConfiguration(hidDev, config, bufferLength);
-  log(__FUNCTION__, hidDev, (PVOID)config, bufferLength);
+  LOGGER_OPEN;
+  logger_handle(f, hidDev);
+  if (result) {
+    logger_hexdump(f, config, bufferLength);
+  }
+  LOGGER_CLOSE;
   return result;
 }
 
 __declspec(dllexport) BOOLEAN __stdcall HidD_SetOutputReport(HANDLE hidDev, PVOID buffer, ULONG bufferLength) {
   BOOLEAN result = Real_HidD_SetOutputReport(hidDev, buffer, bufferLength);
-  log(__FUNCTION__, hidDev, buffer, bufferLength);
+  LOGGER_OPEN;
+  logger_bool(f, result);
+  logger_handle(f, hidDev);
+  logger_hexdump(f, buffer, bufferLength);
+  LOGGER_CLOSE;
   return result;
 }
 
 
 __declspec(dllexport)  NTSTATUS __stdcall HidP_GetCaps(HIDP_PREPARSED_DATA *preparsedData, HIDP_CAPS* caps) {
-  log(__FUNCTION__);
-  return Real_HidP_GetCaps(preparsedData, caps);
+  NTSTATUS result = Real_HidP_GetCaps(preparsedData, caps);
+  LOGGER_OPEN;
+  logger_ulong(f, "Result", result);
+  logger_handle(f, preparsedData);
+  if (result == HIDP_STATUS_SUCCESS) {
+    logger_hexdump(f, caps, sizeof(HIDP_CAPS));
+  }
+  LOGGER_CLOSE;
+  return result;
 }
 
 __declspec(dllexport)  NTSTATUS __stdcall HidP_GetData(HIDP_REPORT_TYPE ReportType, PHIDP_DATA DataList, PULONG DataLength, PHIDP_PREPARSED_DATA PreparsedData, PCHAR Report, ULONG ReportLength) {
-  log(__FUNCTION__);
+  LOGGER_OPEN;
+  LOGGER_CLOSE;
   return Real_HidP_GetData(ReportType, DataList, DataLength, PreparsedData, Report, ReportLength);
 }
 
 __declspec(dllexport)  NTSTATUS __stdcall HidP_GetExtendedAttributes(HIDP_REPORT_TYPE ReportType, USHORT DataIndex, PHIDP_PREPARSED_DATA PreparsedData, PHIDP_EXTENDED_ATTRIBUTES Attributes, PULONG LengthAttributes) {
-  log(__FUNCTION__);
+  LOGGER_OPEN;
+  LOGGER_CLOSE;
   return Real_HidP_GetExtendedAttributes(ReportType, DataIndex, PreparsedData, Attributes, LengthAttributes);
 }
 
 __declspec(dllexport)  NTSTATUS __stdcall HidP_GetLinkCollectionNodes(PHIDP_LINK_COLLECTION_NODE LinkCollectionNodes, PULONG LinkCollectionNodesLength, PHIDP_PREPARSED_DATA PreparsedData) {
-  log(__FUNCTION__);
+  LOGGER_OPEN;
+  LOGGER_CLOSE;
   return Real_HidP_GetLinkCollectionNodes(LinkCollectionNodes, LinkCollectionNodesLength, PreparsedData);
 }
 
 __declspec(dllexport)  NTSTATUS __stdcall HidP_GetScaledUsageValue(HIDP_REPORT_TYPE ReportType, USAGE UsagePage, USHORT LinkCollection, USAGE Usage, PLONG UsageValue, PHIDP_PREPARSED_DATA PreparsedData, PCHAR Report, ULONG ReportLength) {
-  log(__FUNCTION__);
+  LOGGER_OPEN;
+  LOGGER_CLOSE;
   return Real_HidP_GetScaledUsageValue(ReportType, UsagePage, LinkCollection, Usage, UsageValue, PreparsedData, Report, ReportLength);
 }
 
 __declspec(dllexport)  NTSTATUS __stdcall HidP_GetSpecificButtonCaps(HIDP_REPORT_TYPE ReportType, USAGE UsagePage, USHORT LinkCollection, USAGE Usage, PHIDP_BUTTON_CAPS ButtonCaps, PUSHORT ButtonCapsLength, PHIDP_PREPARSED_DATA PreparsedData) {
-  log(__FUNCTION__);
+  LOGGER_OPEN;
+  LOGGER_CLOSE;
   return Real_HidP_GetSpecificButtonCaps(ReportType, UsagePage, LinkCollection, Usage, ButtonCaps, ButtonCapsLength, PreparsedData);
 }
 
 __declspec(dllexport)  NTSTATUS __stdcall HidP_GetSpecificValueCaps(HIDP_REPORT_TYPE ReportType, USAGE UsagePage, USHORT LinkCollection, USAGE Usage, PHIDP_VALUE_CAPS ValueCaps, PUSHORT ValueCapsLength, PHIDP_PREPARSED_DATA PreparsedData) {
-  log(__FUNCTION__);
+  LOGGER_OPEN;
+  LOGGER_CLOSE;
   return Real_HidP_GetSpecificValueCaps(ReportType, UsagePage, LinkCollection, Usage, ValueCaps, ValueCapsLength, PreparsedData);
 }
 
 __declspec(dllexport)  NTSTATUS __stdcall HidP_GetUsages(HIDP_REPORT_TYPE ReportType, USAGE UsagePage, USHORT LinkCollection, PUSAGE UsageList, PULONG UsageLength, PHIDP_PREPARSED_DATA PreparsedData, PCHAR Report, ULONG ReportLength) {
-  log(__FUNCTION__);
+  LOGGER_OPEN;
+  LOGGER_CLOSE;
   return Real_HidP_GetUsages(ReportType, UsagePage, LinkCollection, UsageList, UsageLength, PreparsedData, Report, ReportLength);
 }
 
 __declspec(dllexport)  NTSTATUS __stdcall HidP_GetUsagesEx(HIDP_REPORT_TYPE ReportType ,USHORT LinkCollection, PUSAGE_AND_PAGE ButtonList, ULONG * UsageLength, PHIDP_PREPARSED_DATA PreparsedData, PCHAR Report, ULONG ReportLength) {
-  log(__FUNCTION__);
+  LOGGER_OPEN;
+  LOGGER_CLOSE;
   return Real_HidP_GetUsagesEx(ReportType, LinkCollection, ButtonList, UsageLength, PreparsedData, Report, ReportLength);
 }
 
 __declspec(dllexport)  NTSTATUS __stdcall HidP_GetUsageValue(HIDP_REPORT_TYPE ReportType, USAGE UsagePage, USHORT LinkCollection, USAGE Usage, PULONG UsageValue, PHIDP_PREPARSED_DATA PreparsedData, PCHAR Report, ULONG ReportLength) {
-  log(__FUNCTION__);
+  LOGGER_OPEN;
+  LOGGER_CLOSE;
   return Real_HidP_GetUsageValue(ReportType, UsagePage, LinkCollection, Usage, UsageValue, PreparsedData, Report, ReportLength);
 }
 
 __declspec(dllexport)  NTSTATUS __stdcall HidP_GetUsageValueArray(HIDP_REPORT_TYPE ReportType, USAGE UsagePage, USHORT LinkCollection, USAGE Usage, PCHAR UsageValue, USHORT UsageValueByteLength, PHIDP_PREPARSED_DATA PreparsedData, PCHAR Report, ULONG ReportLength) {
-  log(__FUNCTION__);
+  LOGGER_OPEN;
+  LOGGER_CLOSE;
   return Real_HidP_GetUsageValueArray(ReportType, UsagePage, LinkCollection, Usage, UsageValue, UsageValueByteLength, PreparsedData, Report, ReportLength);
 }
 
 __declspec(dllexport)  NTSTATUS __stdcall HidP_InitializeReportForID(HIDP_REPORT_TYPE ReportType, UCHAR ReportID, PHIDP_PREPARSED_DATA PreparsedData, PCHAR Report, ULONG ReportLength) {
-  log(__FUNCTION__);
+  LOGGER_OPEN;
+  LOGGER_CLOSE;
   return Real_HidP_InitializeReportForID(ReportType, ReportID, PreparsedData, Report, ReportLength);
 }
 
 __declspec(dllexport)  NTSTATUS __stdcall HidP_MaxDataListLength(HIDP_REPORT_TYPE ReportType, PHIDP_PREPARSED_DATA PreparsedData) {
-  log(__FUNCTION__);
+  LOGGER_OPEN;
+  LOGGER_CLOSE;
   return Real_HidP_MaxDataListLength(ReportType, PreparsedData);
 }
 
 __declspec(dllexport)  NTSTATUS __stdcall HidP_MaxUsageListLength(HIDP_REPORT_TYPE ReportType, USAGE UsagePage, PHIDP_PREPARSED_DATA PreparsedData) {
-  log(__FUNCTION__);
+  LOGGER_OPEN;
+  LOGGER_CLOSE;
   return Real_HidP_MaxUsageListLength(ReportType, UsagePage, PreparsedData);
 }
 
 __declspec(dllexport)  NTSTATUS __stdcall HidP_SetData(HIDP_REPORT_TYPE ReportType, PHIDP_DATA DataList, PULONG DataLength, PHIDP_PREPARSED_DATA PreparsedData, PCHAR Report, ULONG ReportLength) {
-  log(__FUNCTION__);
+  LOGGER_OPEN;
+  LOGGER_CLOSE;
   return Real_HidP_SetData(ReportType, DataList, DataLength, PreparsedData, Report, ReportLength);
 }
 
 __declspec(dllexport)  NTSTATUS __stdcall HidP_SetScaledUsageValue(HIDP_REPORT_TYPE ReportType, USAGE UsagePage, USHORT LinkCollection, USAGE Usage, LONG UsageValue, PHIDP_PREPARSED_DATA PreparsedData, PCHAR Report, ULONG ReportLength) {
-  log(__FUNCTION__);
+  LOGGER_OPEN;
+  LOGGER_CLOSE;
   return Real_HidP_SetScaledUsageValue(ReportType, UsagePage, LinkCollection, Usage, UsageValue, PreparsedData, Report, ReportLength);
 }
 
 __declspec(dllexport)  NTSTATUS __stdcall HidP_SetUsages(HIDP_REPORT_TYPE ReportType, USAGE UsagePage, USHORT LinkCollection, PUSAGE UsageList, PULONG UsageLength, PHIDP_PREPARSED_DATA PreparsedData, PCHAR Report, ULONG ReportLength) {
-  log(__FUNCTION__);
+  LOGGER_OPEN;
+  LOGGER_CLOSE;
   return Real_HidP_SetUsages(ReportType, UsagePage, LinkCollection, UsageList, UsageLength, PreparsedData, Report, ReportLength);
 }
 
 __declspec(dllexport)  NTSTATUS __stdcall HidP_SetUsageValue(HIDP_REPORT_TYPE ReportType, USAGE UsagePage, USHORT LinkCollection, USAGE Usage, ULONG UsageValue, PHIDP_PREPARSED_DATA PreparsedData, PCHAR Report, ULONG ReportLength) {
-  log(__FUNCTION__);
+  LOGGER_OPEN;
+  LOGGER_CLOSE;
   return Real_HidP_SetUsageValue(ReportType, UsagePage, LinkCollection, Usage, UsageValue, PreparsedData, Report, ReportLength);
 }
 
 __declspec(dllexport)  NTSTATUS __stdcall HidP_SetUsageValueArray(HIDP_REPORT_TYPE ReportType, USAGE UsagePage, USHORT LinkCollection, USAGE Usage, PCHAR UsageValue, USHORT UsageValueByteLength, PHIDP_PREPARSED_DATA PreparsedData, PCHAR Report, ULONG ReportLength) {
-  log(__FUNCTION__);
+  LOGGER_OPEN;
+  LOGGER_CLOSE;
   return Real_HidP_SetUsageValueArray(ReportType, UsagePage, LinkCollection, Usage, UsageValue, UsageValueByteLength, PreparsedData, Report, ReportLength);
 }
 
 __declspec(dllexport)  NTSTATUS __stdcall HidP_TranslateUsagesToI8042ScanCodes(PUSAGE ChangedUsageList, ULONG UsageListLength, HIDP_KEYBOARD_DIRECTION KeyAction, PHIDP_KEYBOARD_MODIFIER_STATE ModifierState, PHIDP_INSERT_SCANCODES InsertCodesProcedure, PVOID InsertCodesContext) {
-  log(__FUNCTION__);
+  LOGGER_OPEN;
+  LOGGER_CLOSE;
   return Real_HidP_TranslateUsagesToI8042ScanCodes(ChangedUsageList, UsageListLength, KeyAction, ModifierState, InsertCodesProcedure, InsertCodesContext);
 }
 
 __declspec(dllexport)  NTSTATUS __stdcall HidP_UnsetUsages(HIDP_REPORT_TYPE ReportType, USAGE UsagePage, USHORT LinkCollection, PUSAGE UsageList, PULONG UsageLength, PHIDP_PREPARSED_DATA PreparsedData, PCHAR Report, ULONG ReportLength) {
-  log(__FUNCTION__);
+  LOGGER_OPEN;
+  LOGGER_CLOSE;
   return Real_HidP_UnsetUsages(ReportType, UsagePage, LinkCollection, UsageList, UsageLength, PreparsedData, Report, ReportLength);
 }
 
 __declspec(dllexport)  NTSTATUS __stdcall HidP_UsageListDifference(PUSAGE PreviousUsageList, PUSAGE CurrentUsageList, PUSAGE BreakUsageList, PUSAGE MakeUsageList, ULONG UsageListLength) {
-  log(__FUNCTION__);
+  LOGGER_OPEN;
+  LOGGER_CLOSE;
   return Real_HidP_UsageListDifference(PreviousUsageList, CurrentUsageList, BreakUsageList, MakeUsageList, UsageListLength);
 }
 
@@ -442,6 +603,7 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {
   OVR_RESOLVE_HIDFUNC(HidP_TranslateUsagesToI8042ScanCodes);
   OVR_RESOLVE_HIDFUNC(HidP_UnsetUsages);
   OVR_RESOLVE_HIDFUNC(HidP_UsageListDifference);
-  log("Loaded");
+  LOGGER_OPEN;
+  LOGGER_CLOSE;
   return TRUE;
 }
